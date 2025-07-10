@@ -1,7 +1,9 @@
 use anyhow::{anyhow, Result};
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, Parser, Subcommand, ValueHint};
+use clap_complete::{generate, Shell};
 use colored::*;
 use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use tokio::process::Command as AsyncCommand;
@@ -28,6 +30,7 @@ enum Commands {
     /// Sync a repository (add, commit, push)
     Sync {
         /// Repository name (directory name)
+        #[arg(value_hint = ValueHint::Other)]
         name: String,
         /// Commit message
         #[arg(short, long)]
@@ -36,7 +39,22 @@ enum Commands {
     /// Navigate to a repository directory
     Cd {
         /// Repository name or owner/repo format
+        #[arg(value_hint = ValueHint::Other)]
         name: String,
+    },
+    /// Generate shell completion scripts
+    #[command(hide = true)]
+    GenerateCompletion {
+        /// Shell to generate completion for
+        #[arg(value_enum)]
+        shell: Shell,
+    },
+    /// List available repositories (for completion)
+    #[command(hide = true)]
+    ListRepos {
+        /// Filter repos by partial name
+        #[arg(long)]
+        filter: Option<String>,
     },
 }
 
@@ -345,6 +363,62 @@ async fn main() -> Result<()> {
         }
         Commands::Cd { name } => {
             cd_repository(&name).await?;
+        }
+        Commands::GenerateCompletion { shell } => {
+            let mut cmd = Cli::command();
+            generate(shell, &mut cmd, "repman", &mut io::stdout());
+        }
+        Commands::ListRepos { filter } => {
+            let repo_root = get_repo_root()?;
+            if !repo_root.exists() {
+                println!("Repository root directory does not exist: {}", repo_root.display());
+                return Ok(());
+            }
+
+            let mut found_repos = false;
+            for owner_entry in fs::read_dir(&repo_root)? {
+                let owner_entry = owner_entry?;
+                let owner_path = owner_entry.path();
+                
+                if !owner_path.is_dir() {
+                    continue;
+                }
+
+                let owner_name = owner_path.file_name().unwrap().to_string_lossy();
+
+                for repo_entry in fs::read_dir(&owner_path)? {
+                    let repo_entry = repo_entry?;
+                    let repo_path = repo_entry.path();
+                    
+                    if !repo_path.is_dir() {
+                        continue;
+                    }
+
+                    let repo_name = repo_path.file_name().unwrap().to_string_lossy();
+                    
+                    // Apply filter if provided
+                    let should_include = if let Some(filter_str) = &filter {
+                        repo_name.to_lowercase().contains(&filter_str.to_lowercase()) ||
+                        format!("{}/{}", owner_name, repo_name).to_lowercase().contains(&filter_str.to_lowercase())
+                    } else {
+                        true
+                    };
+                    
+                    if should_include {
+                        println!("{}", repo_name);
+                        println!("{}/{}", owner_name, repo_name);
+                        found_repos = true;
+                    }
+                }
+            }
+
+            if !found_repos {
+                if let Some(filter_str) = filter {
+                    println!("No repositories found matching filter '{}'", filter_str);
+                } else {
+                    println!("No repositories found");
+                }
+            }
         }
     }
 
