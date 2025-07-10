@@ -9,7 +9,7 @@ echo "Building repman..."
 cargo build --release
 
 echo "Creating ~/bin directory if it doesn't exist..."
-mkdir -p ~/bin
+mkdir -p "$HOME/bin"
 
 # Detect OS and set binary name
 if [[ "$OSTYPE" == "msys" || "$OSTYPE" == "win32" || "$OS" == "Windows_NT" ]]; then
@@ -19,10 +19,10 @@ else
 fi
 
 echo "Installing $BINARY_NAME to ~/bin..."
-cp "target/release/$BINARY_NAME" "~/bin/$BINARY_NAME"
+cp "target/release/$BINARY_NAME" "$HOME/bin/$BINARY_NAME"
 
 echo "Making executable..."
-chmod +x "~/bin/$BINARY_NAME"
+chmod +x "$HOME/bin/$BINARY_NAME"
 
 echo ""
 echo "✓ repman installed successfully!"
