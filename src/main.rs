@@ -33,6 +33,11 @@ enum Commands {
         #[arg(short, long)]
         message: String,
     },
+    /// Navigate to a repository directory
+    Cd {
+        /// Repository name or owner/repo format
+        name: String,
+    },
 }
 
 fn get_repo_root() -> Result<PathBuf> {
@@ -64,7 +69,7 @@ async fn clone_repository(owner: &str, repo: &str) -> Result<()> {
         fs::create_dir_all(&owner_dir)?;
     }
 
-    let repo_url = format!("https://github.com/{}/{}.git", owner, repo);
+    let repo_url = format!("git@github.com:{}/{}.git", owner, repo);
     println!("Cloning {} to {}...", repo_url.cyan(), repo_dir.display());
 
     let output = AsyncCommand::new("git")
@@ -245,6 +250,85 @@ async fn sync_repository(name: &str, message: &str) -> Result<()> {
     Ok(())
 }
 
+async fn cd_repository(name: &str) -> Result<()> {
+    let repo_root = get_repo_root()?;
+    if !repo_root.exists() {
+        println!("Repository root directory does not exist: {}", repo_root.display());
+        return Ok(());
+    }
+
+    // Check if it's owner/repo format
+    if name.contains('/') {
+        let parts: Vec<&str> = name.split('/').collect();
+        if parts.len() == 2 {
+            let owner = parts[0];
+            let repo = parts[1];
+            let repo_path = repo_root.join(owner).join(repo);
+            
+            if repo_path.exists() {
+                println!("cd {}", repo_path.display());
+                return Ok(());
+            } else {
+                println!("{} Repository not found: {}", "✗".red(), repo_path.display());
+                return Ok(());
+            }
+        }
+    }
+
+    // Search for repositories matching the name
+    let mut matches = Vec::new();
+    
+    for owner_entry in fs::read_dir(&repo_root)? {
+        let owner_entry = owner_entry?;
+        let owner_path = owner_entry.path();
+        
+        if !owner_path.is_dir() {
+            continue;
+        }
+
+        let owner_name = owner_path.file_name().unwrap().to_string_lossy();
+
+        for repo_entry in fs::read_dir(&owner_path)? {
+            let repo_entry = repo_entry?;
+            let repo_path = repo_entry.path();
+            
+            if !repo_path.is_dir() {
+                continue;
+            }
+
+            let repo_name = repo_path.file_name().unwrap().to_string_lossy();
+            
+            // Exact match
+            if repo_name == name {
+                matches.push((owner_name.to_string(), repo_name.to_string(), repo_path.clone()));
+            }
+            // Fuzzy match (contains)
+            else if repo_name.to_lowercase().contains(&name.to_lowercase()) {
+                matches.push((owner_name.to_string(), repo_name.to_string(), repo_path.clone()));
+            }
+        }
+    }
+
+    match matches.len() {
+        0 => {
+            println!("{} No repositories found matching '{}'", "✗".red(), name);
+        }
+        1 => {
+            let (_, _, path) = &matches[0];
+            println!("cd {}", path.display());
+        }
+        _ => {
+            println!("{} Multiple repositories found:", "ℹ".blue());
+            for (i, (owner, repo, path)) in matches.iter().enumerate() {
+                println!("  {}: {}/{} -> {}", i + 1, owner.cyan(), repo.bold(), path.display());
+            }
+            println!("\nUse the full format: repman cd owner/repo");
+        }
+    }
+
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
@@ -258,6 +342,9 @@ async fn main() -> Result<()> {
         }
         Commands::Sync { name, message } => {
             sync_repository(&name, &message).await?;
+        }
+        Commands::Cd { name } => {
+            cd_repository(&name).await?;
         }
     }
 
